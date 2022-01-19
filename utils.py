@@ -96,13 +96,12 @@ idx2tag = {i: t for i, t in enumerate(tags_vals)}
 
 
 def process_resume(data, tokenizer, tag2idx, max_len, is_test=False):
-    tok = tokenizer.encode_plus(
-        data[0], max_length=max_len, return_offsets_mapping=True)
+    tok = tokenizer(data[0], max_length=max_len, return_offsets_mapping=True) # encode_plus is deprecated, use __call__ instead
     curr_sent = {'orig_labels': [], 'labels': []}
 
     padding_length = max_len - len(tok['input_ids'])
 
-    if not is_test:
+    if not is_test: # training
         labels = data[1]['entities']
         labels.reverse()
         for off in tok['offset_mapping']:
@@ -112,10 +111,8 @@ def process_resume(data, tokenizer, tag2idx, max_len, is_test=False):
         curr_sent['labels'] = curr_sent['labels'] + ([0] * padding_length)
 
     curr_sent['input_ids'] = tok['input_ids'] + ([0] * padding_length)
-    curr_sent['token_type_ids'] = tok['token_type_ids'] + \
-        ([0] * padding_length)
-    curr_sent['attention_mask'] = tok['attention_mask'] + \
-        ([0] * padding_length)
+    # curr_sent['token_type_ids'] = tok['token_type_ids'] + ([0] * padding_length)
+    curr_sent['attention_mask'] = tok['attention_mask'] + ([0] * padding_length)
     return curr_sent
 
 
@@ -131,21 +128,18 @@ class ResumeDataset(Dataset):
         return len(self.resume)
 
     def __getitem__(self, idx):
-        data = process_resume(
-            self.resume[idx], self.tokenizer, self.tag2idx, self.max_len, self.is_test)
+        data = process_resume(self.resume[idx], self.tokenizer, self.tag2idx, self.max_len, self.is_test)
         return {
             'input_ids': torch.tensor(data['input_ids'], dtype=torch.long),
-            'token_type_ids': torch.tensor(data['token_type_ids'], dtype=torch.long),
+            # 'token_type_ids': torch.tensor(data['token_type_ids'], dtype=torch.long),
             'attention_mask': torch.tensor(data['attention_mask'], dtype=torch.long),
             'labels': torch.tensor(data['labels'], dtype=torch.long),
             'orig_label': data['orig_labels']
         }
 
 
-def get_hyperparameters(model, ff):
-
-    # ff: full_finetuning
-    if ff:
+def get_hyperparameters(model, full_finetuning):
+    if full_finetuning:
         param_optimizer = list(model.named_parameters())
         no_decay = ["bias", "gamma", "beta"]
         optimizer_grouped_parameters = [
@@ -187,13 +181,9 @@ def annot_confusion_matrix(valid_tags, pred_tags):
     """
 
     header = sorted(list(set(valid_tags + pred_tags)))
-
     matrix = confusion_matrix(valid_tags, pred_tags, labels=header)
-
-    mat_formatted = [header[i] + "\t\t\t" +
-                     str(row) for i, row in enumerate(matrix)]
+    mat_formatted = [header[i] + "\t\t\t" + str(row) for i, row in enumerate(matrix)]
     content = "\t" + " ".join(header) + "\n" + "\n".join(mat_formatted)
-
     return content
 
 
@@ -232,16 +222,12 @@ def train_and_val_model(
 
             # batch = tuple(t.to(device) for t in batch)
             b_input_ids, b_input_mask, b_labels = batch['input_ids'], batch['attention_mask'], batch['labels']
-            b_input_ids, b_input_mask, b_labels = b_input_ids.to(
-                device), b_input_mask.to(device), b_labels.to(device)
+            b_input_ids, b_input_mask, b_labels = b_input_ids.to(device), b_input_mask.to(device), b_labels.to(device)
 
             # Forward pass
-            outputs = model(
-                b_input_ids,
-                token_type_ids=None,
-                attention_mask=b_input_mask,
-                labels=b_labels,
-            )
+            outputs = model(b_input_ids, 
+                            # token_type_ids=None,
+                            attention_mask=b_input_mask, labels=b_labels)
             loss, tr_logits = outputs[:2]
 
             # Backward pass
@@ -306,7 +292,7 @@ def train_and_val_model(
             with torch.no_grad():
                 outputs = model(
                     b_input_ids,
-                    token_type_ids=None,
+                    # token_type_ids=None,
                     attention_mask=b_input_mask,
                     labels=b_labels,
                 )
